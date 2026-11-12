@@ -33,13 +33,23 @@ const visits = require('./routes/visits');
 app.use('/api', visits.publicRouter);           // POST /api/track (visitor counter)
 app.use('/api/admin', visits.adminRouter);      // GET /api/admin/visits
 app.use('/api/admin', payments.adminRouter);    // payments, refunds, Razorpay settings
+const testimonials = require('./routes/testimonials');
+app.use('/api', testimonials.publicRouter);     // GET /api/testimonials (home page client reviews)
+app.use('/api/admin', testimonials.adminRouter); // Admin → Client reviews
+const site = require('./routes/site');
+app.use('/api', site.publicRouter);             // GET /api/site (website photos and text)
+app.use('/api/admin', site.adminRouter);         // Admin → Website
 app.use('/api', require('./routes/public').router);
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
 
-// uploaded product photos and videos
+// uploaded photos and videos: stored in MySQL (src/files.js); older files in server/uploads still work
+const files = require('./files');
+app.get('/uploads/:name', files.serveFile);
+app.head('/uploads/:name', files.serveFile);
 app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads'), { maxAge: '30d' }));
+app.use('/uploads', (req, res) => res.status(404).json({ error: 'File not found.' }));
 
 // In production, serve the built React app from client/dist (single deploy)
 const dist = path.join(__dirname, '..', '..', 'client', 'dist');
@@ -60,6 +70,9 @@ app.listen(port, async () => {
   console.log(`Deeraj Interiors API running on http://localhost:${port}`);
   // startup checks so login problems are easy to spot
   try { await visits.ensureVisitsTable(); } catch (e) { /* reported by the database check below */ }
+  try { await files.ensureFilesTable(); } catch (e) { console.error('[Uploads] Could not prepare the uploaded_files table:', e.code || e.message); }
+  try { await site.ensureSiteContent(); } catch (e) { console.error('[Website] Could not prepare website content:', e.code || e.message); }
+  try { await testimonials.ensureTestimonialsTable(); } catch (e) { console.error('[Reviews] Could not prepare the reviews table:', e.code || e.message); }
   try { await payments.ensurePaymentTables(); } catch (e) { console.error('[Payments] Could not prepare payment tables:', e.code || e.message); }
   try {
     const [[row]] = await pool.query('SELECT COUNT(*) AS n FROM admins');

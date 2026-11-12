@@ -46,7 +46,9 @@ function parseCSV(text) {
 const yes = (v, d) => (v === undefined || String(v).trim() === '' ? d : /^(y|yes|true|1)$/i.test(String(v).trim()));
 const list = (v, sep = '|') => String(v || '').split(sep).map((x) => x.trim()).filter(Boolean);
 
-/** Copy a file from import/images into uploads and return its public URL. */
+/** Queue a file from import/images to be saved in the database (uploaded_files) and return its public URL. */
+const PENDING = [];
+const MIME = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif', '.avif': 'image/avif', '.mp4': 'video/mp4', '.webm': 'video/webm' };
 function upload(file, problems, rowNo) {
   const src = path.join(IMG_DIR, file);
   if (!fs.existsSync(src)) { problems.push(`Row ${rowNo}: file not found in import/images: ${file}`); return null; }
@@ -55,7 +57,7 @@ function upload(file, problems, rowNo) {
   const max = ['.mp4', '.webm'].includes(ext) ? 20 : 5;
   if (fs.statSync(src).size > max * 1024 * 1024) { problems.push(`Row ${rowNo}: ${file} is larger than ${max} MB`); return null; }
   const name = Date.now() + '-' + crypto.randomBytes(5).toString('hex') + ext;
-  if (!DRY) { fs.mkdirSync(UPLOADS, { recursive: true }); fs.copyFileSync(src, path.join(UPLOADS, name)); }
+  PENDING.push({ name, mime: MIME[ext], src, original: file });
   return `${BASE}/uploads/${name}`;
 }
 
@@ -93,6 +95,7 @@ function upload(file, problems, rowNo) {
   });
   let added = 0; let updated = 0;
   try {
+    await require('../src/files').ensureFilesTable(conn); // before the transaction (CREATE TABLE would end it)
     await conn.beginTransaction();
     for (const p of items) {
       const fileProblems = [];
@@ -124,6 +127,8 @@ function upload(file, problems, rowNo) {
       }
       console.log(`${found.length ? 'Updated' : 'Added  '}  ${p.name}  (${images.length} photos${video ? ', video' : ''}${colors.length ? ', ' + colors.length + ' colours' : ''})`);
     }
+    // photos and videos go into the database together with the products (same transaction)
+    for (const f of PENDING) await require('../src/files').saveFile({ name: f.name, mime: f.mime, buffer: fs.readFileSync(f.src), original: f.original }, conn);
     if (DRY) { await conn.rollback(); console.log(`\nDry run OK: ${items.length} rows are valid. Nothing was saved.`); }
     else { await conn.commit(); console.log(`\nDone: ${added} added, ${updated} updated. They are live in the Online Store now.`); }
   } catch (e) {

@@ -9,7 +9,8 @@
     "dev": "node --watch src/index.js",
     "db:setup": "node scripts/setup-db.js",
     "import:products": "node scripts/import-products.js",
-    "admin:reset": "node scripts/reset-admin.js"
+    "admin:reset": "node scripts/reset-admin.js",
+    "uploads:to-db": "node scripts/uploads-to-db.js"
   },
   "engines": {
     "node": ">=18"

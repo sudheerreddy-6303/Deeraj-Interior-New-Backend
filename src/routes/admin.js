@@ -22,25 +22,28 @@ const UPLOAD_DIR = path.join(__dirname, '..', '..', 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 const IMG = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif'];
 const VID = ['video/mp4', 'video/webm'];
+// files are kept in memory, then saved in MySQL (see src/files.js) so they survive redeploys
+const { saveFile } = require('../files');
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: UPLOAD_DIR,
-    filename: (req, file, cb) => cb(null, Date.now() + '-' + crypto.randomBytes(6).toString('hex') + path.extname(file.originalname).toLowerCase().replace(/[^.a-z0-9]/g, ''))
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 },
   fileFilter: (req, file, cb) => cb(IMG.includes(file.mimetype) || VID.includes(file.mimetype) ? null : new Error('Only JPG, PNG, WebP, GIF images or MP4/WebM videos are allowed.'), true)
 });
 
-router.post('/upload', (req, res) => {
-  upload.single('file')(req, res, (err) => {
+router.post('/upload', (req, res, next) => {
+  upload.single('file')(req, res, async (err) => {
     if (err) return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'File is larger than 20 MB.' : err.message });
     if (!req.file) return res.status(400).json({ error: 'No file received.' });
-    if (IMG.includes(req.file.mimetype) && req.file.size > 5 * 1024 * 1024) {
-      fs.unlink(req.file.path, () => {});
-      return res.status(400).json({ error: 'Photos must be 5 MB or smaller.' });
+    if (IMG.includes(req.file.mimetype) && req.file.size > 5 * 1024 * 1024) return res.status(400).json({ error: 'Photos must be 5 MB or smaller.' });
+    const name = Date.now() + '-' + crypto.randomBytes(6).toString('hex') + path.extname(req.file.originalname).toLowerCase().replace(/[^.a-z0-9]/g, '');
+    try {
+      await saveFile({ name, mime: req.file.mimetype, buffer: req.file.buffer, original: req.file.originalname });
+    } catch (e) {
+      console.error('[Uploads] Could not save file in the database:', e.code || e.message);
+      return res.status(500).json({ error: e.code === 'ER_NET_PACKET_TOO_LARGE' ? 'The database refused this file because it is too large. Try a smaller file.' : 'Could not save the file. Please try again.' });
     }
     const base = (process.env.PUBLIC_URL || '').replace(/\/$/, '');
-    res.status(201).json({ url: `${base}/uploads/${req.file.filename}`, type: req.file.mimetype.startsWith('video') ? 'video' : 'image' });
+    res.status(201).json({ url: `${base}/uploads/${name}`, type: req.file.mimetype.startsWith('video') ? 'video' : 'image' });
   });
 });
 
